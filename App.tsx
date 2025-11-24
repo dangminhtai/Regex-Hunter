@@ -1,9 +1,9 @@
 
 import React, { useState, useCallback } from 'react';
 import { GameState, GameLevel, CandidateString, GameMode } from './types';
-import { generateLevel } from './services/geminiService';
+import { generateLevel, getRegexHint } from './services/geminiService';
 import GameButton from './components/GameButton';
-import { Terminal, Heart, Trophy, RefreshCw, Play, AlertTriangle, ShieldCheck, CheckCircle2, Search, ArrowRightFromLine, Maximize2 } from 'lucide-react';
+import { Terminal, Heart, Trophy, RefreshCw, Play, AlertTriangle, ShieldCheck, CheckCircle2, Search, ArrowRightFromLine, Maximize2, Lightbulb, Loader2 } from 'lucide-react';
 
 // Utility to generate unique IDs
 const uid = () => Math.random().toString(36).substr(2, 9);
@@ -16,10 +16,15 @@ export default function App() {
   const [score, setScore] = useState(0);
   const [message, setMessage] = useState<string>("");
   const [gameMode, setGameMode] = useState<GameMode>('search');
+  
+  // Hint State
+  const [hint, setHint] = useState<string | null>(null);
+  const [isHintLoading, setIsHintLoading] = useState(false);
 
   const startNewLevel = useCallback(async (currentDifficulty: number, mode: GameMode) => {
     setGameState(GameState.LOADING);
     setMessage("Đang khởi tạo hệ thống...");
+    setHint(null); // Reset hint
     
     const data = await generateLevel(currentDifficulty, mode);
     
@@ -46,6 +51,18 @@ export default function App() {
     setLives(3);
     setDifficulty(1);
     startNewLevel(1, gameMode);
+  };
+
+  const handleGetHint = async () => {
+    if (!levelData || isHintLoading || hint) return;
+    
+    setIsHintLoading(true);
+    const hintText = await getRegexHint(levelData.regex);
+    setHint(hintText);
+    setIsHintLoading(false);
+    
+    // Trừ điểm nhẹ nếu dùng gợi ý để công bằng (tuỳ chọn)
+    // setScore(s => Math.max(0, s - 5));
   };
 
   const handleItemClick = (id: string) => {
@@ -203,20 +220,42 @@ export default function App() {
           <div className="w-full space-y-8 animate-fade-in">
             
             {/* Regex Display */}
-            <div className="bg-black/50 border border-slate-700 rounded-xl p-6 text-center relative overflow-hidden group">
-               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50"></div>
-               <div className="flex justify-center items-center gap-2 text-slate-500 text-sm mb-2 uppercase tracking-widest font-bold">
-                 <span>MỤC TIÊU:</span>
-                 {gameMode === 'search' && <span className="text-emerald-400 flex items-center gap-1"><Search size={14}/> Search</span>}
-                 {gameMode === 'match' && <span className="text-blue-400 flex items-center gap-1"><ArrowRightFromLine size={14}/> Match Start</span>}
-                 {gameMode === 'fullmatch' && <span className="text-purple-400 flex items-center gap-1"><Maximize2 size={14}/> Full Match</span>}
-               </div>
-               <code className="block text-3xl md:text-5xl font-mono text-emerald-400 neon-text break-words px-2">
-                 /{levelData.regex}/
-               </code>
-               <p className="text-slate-500 mt-2 text-xs uppercase tracking-wider">
-                 Tự phân tích cú pháp. Không có gợi ý.
-               </p>
+            <div className="relative">
+                <div className="bg-black/50 border border-slate-700 rounded-xl p-6 text-center relative overflow-hidden group">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50"></div>
+                    <div className="flex justify-center items-center gap-2 text-slate-500 text-sm mb-2 uppercase tracking-widest font-bold">
+                        <span>MỤC TIÊU:</span>
+                        {gameMode === 'search' && <span className="text-emerald-400 flex items-center gap-1"><Search size={14}/> Search</span>}
+                        {gameMode === 'match' && <span className="text-blue-400 flex items-center gap-1"><ArrowRightFromLine size={14}/> Match Start</span>}
+                        {gameMode === 'fullmatch' && <span className="text-purple-400 flex items-center gap-1"><Maximize2 size={14}/> Full Match</span>}
+                    </div>
+                    <code className="block text-3xl md:text-5xl font-mono text-emerald-400 neon-text break-words px-2">
+                        /{levelData.regex}/
+                    </code>
+                </div>
+
+                {/* Hint Button & Display */}
+                <div className="flex flex-col items-center mt-4">
+                    {!hint ? (
+                        <button 
+                            onClick={handleGetHint}
+                            disabled={isHintLoading || gameState !== GameState.PLAYING}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold border transition-all ${
+                                isHintLoading 
+                                ? 'bg-slate-800 text-slate-500 border-slate-700' 
+                                : 'bg-slate-800 text-yellow-400 border-yellow-500/50 hover:bg-yellow-900/20 hover:border-yellow-400'
+                            }`}
+                        >
+                            {isHintLoading ? <Loader2 size={16} className="animate-spin"/> : <Lightbulb size={16} />}
+                            {isHintLoading ? "Đang hỏi Gemini..." : "Gợi ý AI"}
+                        </button>
+                    ) : (
+                        <div className="animate-in fade-in slide-in-from-top-2 bg-yellow-900/20 border border-yellow-500/30 text-yellow-200 px-4 py-3 rounded-lg text-sm max-w-2xl text-center">
+                            <span className="font-bold text-yellow-500 mr-2">[GEMINI]:</span>
+                            {hint}
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Grid */}
@@ -270,7 +309,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="mt-8 text-slate-600 text-sm text-center py-4">
-        <p>Engine: Procedural Generation (v1.0)</p>
+        <p>Engine: Procedural Generation + Gemini 2.5 Flash Lite</p>
       </footer>
 
       {/* Custom Keyframe animation for Shake */}

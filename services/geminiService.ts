@@ -1,5 +1,6 @@
 import { LevelData, GameMode } from "../types";
 import { generateProceduralLevel } from "./regexGenerator";
+import { GoogleGenAI } from "@google/genai";
 
 // Hàm tiện ích xáo trộn mảng
 const shuffleArray = <T>(array: T[]): T[] => {
@@ -25,12 +26,12 @@ const addNoise = (core: string): string => {
     return noise + core + noise;
 };
 
+// --- CORE GAMEPLAY: PROCEDURAL GENERATION ---
 export const generateLevel = async (difficulty: number, mode: GameMode): Promise<LevelData> => {
   // Giả lập độ trễ tính toán cực nhỏ
-  await new Promise(resolve => setTimeout(resolve, 100));
+  await new Promise(resolve => setTimeout(resolve, 50));
 
   // 1. Gọi Engine sinh Regex
-  // Lưu ý: Engine luôn sinh ra regex "lõi" (core pattern)
   const coreData = generateProceduralLevel(difficulty);
   
   let finalRegex = coreData.regex;
@@ -38,43 +39,49 @@ export const generateLevel = async (difficulty: number, mode: GameMode): Promise
 
   // 2. Xử lý theo Game Mode
   if (mode === 'fullmatch') {
-      // Chế độ Full Match: Regex phải có ^ và $
-      // Chuỗi đúng phải khớp 100%
-      // Chuỗi sai: Đã được engine sinh ra (sai ký tự, sai độ dài)
-      
       finalRegex = `^${coreData.regex}$`;
       finalCandidates = [...coreData.correct, ...coreData.wrong];
-
   } else if (mode === 'match') {
-      // Chế độ Match Start: Regex có ^
-      // Chuỗi đúng: Core match + (có thể có đuôi rác)
-      // Chuỗi sai: Core wrong + ...
-      
       finalRegex = `^${coreData.regex}`;
-      
       const noisyCorrect = coreData.correct.map(s => Math.random() > 0.5 ? s + "..." : s);
       finalCandidates = [...noisyCorrect, ...coreData.wrong];
-
   } else {
-      // Chế độ Search (Default): Regex để trần
-      // Chuỗi đúng: Cần thêm nhiễu bao quanh (Surrounding noise) để người chơi phải tìm substring
-      // Nếu để nguyên chuỗi đúng thì quá dễ (trông giống full match)
-      
-      // Giữ nguyên regex core
+      // Search Mode
       finalRegex = coreData.regex;
-
-      // Thêm nhiễu vào chuỗi đúng để biến nó thành bài toán tìm kiếm substring
       const noisyCorrect = coreData.correct.map(s => addNoise(s));
-      
-      // Với chuỗi sai, ta cũng có thể thêm nhiễu để đánh lạc hướng, 
-      // nhưng phải cẩn thận ko vô tình tạo ra chuỗi đúng trong nhiễu.
-      // Tạm thời giữ nguyên chuỗi sai từ engine (vốn đã sai core pattern)
       finalCandidates = [...noisyCorrect, ...coreData.wrong];
   }
 
-  // 3. Trộn và trả về
   return {
     regex: finalRegex,
     candidates: shuffleArray(finalCandidates)
   };
+};
+
+// --- OPTIONAL AI FEATURE: HINTS ---
+// Chỉ gọi khi người dùng yêu cầu
+export const getRegexHint = async (regex: string): Promise<string> => {
+  try {
+    if (!process.env.API_KEY) {
+      return "Chưa cấu hình API Key. Hãy tự phân tích nhé!";
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    // Sử dụng Flash Lite cho nhanh và rẻ
+    const model = 'gemini-flash-lite-latest';
+    
+    const prompt = `Giải thích ngắn gọn (dưới 20 từ) Pattern Regex sau đây khớp với cái gì. Dùng tiếng Việt. Chỉ giải thích ý nghĩa, không đưa ra ví dụ.
+    Regex: /${regex}/`;
+
+    const response = await ai.models.generateContent({
+      model: model,
+      contents: prompt,
+    });
+
+    return response.text || "Không thể tạo gợi ý lúc này.";
+  } catch (error) {
+    console.error("AI Error:", error);
+    return "Lỗi kết nối AI. Bạn phải tự lực cánh sinh rồi!";
+  }
 };
