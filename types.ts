@@ -17,12 +17,10 @@ export interface CandidateString {
 
 export interface LevelData {
   regex: string;
-  description: string; // Giải thích ngắn gọn về regex
-  candidates: string[]; // Danh sách chuỗi thô từ AI
+  candidates: string[]; // Danh sách chuỗi thô
 }
 
 export interface GameLevel {
   regex: string;
-  description: string;
   items: CandidateString[];
 }

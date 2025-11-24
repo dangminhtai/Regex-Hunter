@@ -1,11 +1,7 @@
-
 import { LevelData, GameMode } from "../types";
-import { STATIC_LEVELS } from "./staticLevels";
+import { generateProceduralLevel } from "./regexGenerator";
 
-// Hàm tiện ích để lấy ngẫu nhiên phần tử mảng
-const getRandomItem = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-
-// Hàm xáo trộn mảng
+// Hàm tiện ích xáo trộn mảng
 const shuffleArray = <T>(array: T[]): T[] => {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
@@ -15,89 +11,70 @@ const shuffleArray = <T>(array: T[]): T[] => {
   return newArray;
 };
 
-export const generateLevel = async (difficulty: number, mode: GameMode): Promise<LevelData> => {
-  // Giả lập độ trễ mạng cực nhỏ để tạo cảm giác "loading" mượt mà
-  await new Promise(resolve => setTimeout(resolve, 300));
-
-  // 1. Lọc các level phù hợp với độ khó
-  // Difficulty 1-3: Easy
-  // Difficulty 4-6: Medium
-  // Difficulty 7+: Hard
-  // Nếu không có level chính xác, lấy random toàn bộ để game không bị crash
-  let availableLevels = STATIC_LEVELS.filter(l => {
-    if (difficulty <= 3) return l.difficulty <= 3;
-    if (difficulty <= 6) return l.difficulty > 3 && l.difficulty <= 6;
-    return l.difficulty > 6;
-  });
-
-  if (availableLevels.length === 0) {
-    availableLevels = STATIC_LEVELS;
-  }
-
-  // 2. Chọn ngẫu nhiên một đề bài
-  const rawLevel = getRandomItem(availableLevels);
-
-  // 3. Biến đổi Regex theo Game Mode
-  let finalRegex = rawLevel.rawRegex;
-  let modeDescription = "";
-
-  switch (mode) {
-    case 'fullmatch':
-      // Nếu regex chưa có neo, thêm vào
-      if (!finalRegex.startsWith('^')) finalRegex = '^' + finalRegex;
-      if (!finalRegex.endsWith('$')) finalRegex = finalRegex + '$';
-      modeDescription = "(Yêu cầu khớp toàn bộ)";
-      break;
-    case 'match':
-      if (!finalRegex.startsWith('^')) finalRegex = '^' + finalRegex;
-      // Nếu có $ ở cuối thì bỏ đi để phù hợp chế độ "Match Start"
-      if (finalRegex.endsWith('$') && !rawLevel.rawRegex.endsWith('$')) {
-          finalRegex = finalRegex.slice(0, -1);
-      }
-      modeDescription = "(Yêu cầu bắt đầu bằng...)";
-      break;
-    case 'search':
-    default:
-      // Xóa neo nếu có trong raw (trừ khi rawRegex bản chất đã có)
-      // Ở đây ta giả định rawRegex trong staticLevels được viết cho dạng search/general
-      // Tuy nhiên nếu rawRegex có ^ hoặc $ cứng, ta giữ nguyên tôn trọng người ra đề
-      modeDescription = "(Tìm chuỗi con)";
-      break;
-  }
-
-  // 4. Validate và Lọc Candidates
-  // Ta cần đảm bảo rằng với Regex MỚI (đã thêm ^ $), danh sách candidates vẫn hợp lý.
-  // Ví dụ: Regex gốc \d{3}. Candidates "abc123xyz".
-  // - Mode Search: Match (ĐÚNG)
-  // - Mode FullMatch: ^\d{3}$ -> Fail (ĐÚNG logic)
-  
-  // Chúng ta lấy danh sách candidates gốc và trộn lên
-  let candidates = shuffleArray(rawLevel.candidates);
-
-  // Đảm bảo luôn có ít nhất 1 đáp án đúng trong danh sách trả về
-  // Thực tế bộ data static đã thiết kế để có match/no-match, nhưng khi đổi mode (ví dụ sang FullMatch),
-  // số lượng match có thể giảm về 0.
-  // Ta cần kiểm tra:
-  const tempRegex = new RegExp(finalRegex);
-  const hasMatch = candidates.some(c => tempRegex.test(c));
-
-  if (!hasMatch) {
-    // Nếu chế độ chơi quá khó khiến không chuỗi nào khớp (VD: bắt search "abc" thành fullmatch "abc" mà input toàn "xyzabc"),
-    // Ta phải "hack" một chút: Tạo ra một candidate đúng từ chính regex (Rất khó nếu regex phức tạp)
-    // HOẶC đơn giản hơn: Fallback về mode 'search' cho level này nếu không tìm thấy match nào phù hợp mode hiện tại
-    // Nhưng cách tốt nhất cho Static Data: Đảm bảo Data Candidates đa dạng (đã làm ở file staticLevels).
+// Hàm sinh nhiễu (noise) để bao quanh chuỗi đúng trong chế độ Search
+const addNoise = (core: string): string => {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789_-.";
+    const noiseLen = Math.floor(Math.random() * 3) + 1; // 1-3 ký tự rác
+    let noise = "";
+    for(let i=0; i<noiseLen; i++) noise += chars[Math.floor(Math.random() * chars.length)];
     
-    // Fallback an toàn: Nếu không có match nào, ta quay về regex gốc (Search mode) để game không bị kẹt
-    // Hoặc báo lỗi. Ở đây ta chọn cách revert về search mode regex nếu cần thiết
-    if (mode !== 'search') {
-        console.warn(`Level "${rawLevel.description}" không có đáp án đúng ở chế độ ${mode}. Revert về search mode.`);
-        finalRegex = rawLevel.rawRegex; 
-    }
+    // 50% nhiễu đầu, 50% nhiễu đuôi, hoặc cả hai
+    const r = Math.random();
+    if (r < 0.33) return noise + core;
+    if (r < 0.66) return core + noise;
+    return noise + core + noise;
+};
+
+export const generateLevel = async (difficulty: number, mode: GameMode): Promise<LevelData> => {
+  // Giả lập độ trễ tính toán cực nhỏ
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  // 1. Gọi Engine sinh Regex
+  // Lưu ý: Engine luôn sinh ra regex "lõi" (core pattern)
+  const coreData = generateProceduralLevel(difficulty);
+  
+  let finalRegex = coreData.regex;
+  let finalCandidates: string[] = [];
+
+  // 2. Xử lý theo Game Mode
+  if (mode === 'fullmatch') {
+      // Chế độ Full Match: Regex phải có ^ và $
+      // Chuỗi đúng phải khớp 100%
+      // Chuỗi sai: Đã được engine sinh ra (sai ký tự, sai độ dài)
+      
+      finalRegex = `^${coreData.regex}$`;
+      finalCandidates = [...coreData.correct, ...coreData.wrong];
+
+  } else if (mode === 'match') {
+      // Chế độ Match Start: Regex có ^
+      // Chuỗi đúng: Core match + (có thể có đuôi rác)
+      // Chuỗi sai: Core wrong + ...
+      
+      finalRegex = `^${coreData.regex}`;
+      
+      const noisyCorrect = coreData.correct.map(s => Math.random() > 0.5 ? s + "..." : s);
+      finalCandidates = [...noisyCorrect, ...coreData.wrong];
+
+  } else {
+      // Chế độ Search (Default): Regex để trần
+      // Chuỗi đúng: Cần thêm nhiễu bao quanh (Surrounding noise) để người chơi phải tìm substring
+      // Nếu để nguyên chuỗi đúng thì quá dễ (trông giống full match)
+      
+      // Giữ nguyên regex core
+      finalRegex = coreData.regex;
+
+      // Thêm nhiễu vào chuỗi đúng để biến nó thành bài toán tìm kiếm substring
+      const noisyCorrect = coreData.correct.map(s => addNoise(s));
+      
+      // Với chuỗi sai, ta cũng có thể thêm nhiễu để đánh lạc hướng, 
+      // nhưng phải cẩn thận ko vô tình tạo ra chuỗi đúng trong nhiễu.
+      // Tạm thời giữ nguyên chuỗi sai từ engine (vốn đã sai core pattern)
+      finalCandidates = [...noisyCorrect, ...coreData.wrong];
   }
 
+  // 3. Trộn và trả về
   return {
     regex: finalRegex,
-    description: `${rawLevel.description} ${modeDescription}`,
-    candidates: candidates
+    candidates: shuffleArray(finalCandidates)
   };
 };

@@ -19,12 +19,11 @@ export default function App() {
 
   const startNewLevel = useCallback(async (currentDifficulty: number, mode: GameMode) => {
     setGameState(GameState.LOADING);
-    setMessage("Đang tải dữ liệu...");
+    setMessage("Đang khởi tạo hệ thống...");
     
     const data = await generateLevel(currentDifficulty, mode);
     
     // Validate candidates locally - Double check logic
-    // Logic này cũng đã được xử lý trong service nhưng kiểm tra lại ở đây để render UI
     const regex = new RegExp(data.regex);
     const items: CandidateString[] = data.candidates.map(text => ({
       id: uid(),
@@ -35,7 +34,6 @@ export default function App() {
 
     setLevelData({
       regex: data.regex,
-      description: data.description,
       items
     });
     
@@ -92,7 +90,7 @@ export default function App() {
 
   const handleLevelComplete = () => {
     setGameState(GameState.VICTORY);
-    setMessage("Level Complete! Chuẩn bị level tiếp theo...");
+    setMessage("Level Complete! Đang tăng độ khó...");
     setTimeout(() => {
       const nextDiff = difficulty + 1;
       setDifficulty(nextDiff);
@@ -150,7 +148,7 @@ export default function App() {
             </div>
             <h2 className="text-4xl font-bold">Regex Hunter</h2>
             <p className="text-slate-400">
-              Chọn chế độ chơi và bắt đầu hack vào hệ thống.
+              Chọn chế độ và chứng minh kỹ năng Regex của bạn.
             </p>
 
             {/* Mode Selection */}
@@ -216,8 +214,8 @@ export default function App() {
                <code className="block text-3xl md:text-5xl font-mono text-emerald-400 neon-text break-words px-2">
                  /{levelData.regex}/
                </code>
-               <p className="text-slate-400 mt-4 text-sm italic border-t border-slate-800 pt-2 inline-block px-4">
-                 Gợi ý: {levelData.description}
+               <p className="text-slate-500 mt-2 text-xs uppercase tracking-wider">
+                 Tự phân tích cú pháp. Không có gợi ý.
                </p>
             </div>
 
@@ -249,7 +247,7 @@ export default function App() {
                  <div className="text-center p-8 bg-slate-900 border border-red-600 rounded-2xl shadow-[0_0_50px_rgba(220,38,38,0.2)] max-w-md w-full mx-4">
                      <AlertTriangle size={64} className="text-red-500 mx-auto mb-4" />
                      <h2 className="text-4xl font-bold text-red-500 mb-2">GAME TOANG!</h2>
-                     <p className="text-slate-300 mb-6">Bạn đã chọn sai quá 3 lần. Hệ thống phát hiện xâm nhập.</p>
+                     <p className="text-slate-300 mb-6">Bạn đã chọn sai quá 3 lần.</p>
                      
                      <div className="bg-slate-800 p-4 rounded-lg mb-6">
                         <p className="text-slate-400 text-sm">Điểm số cuối cùng</p>
@@ -272,7 +270,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="mt-8 text-slate-600 text-sm text-center py-4">
-        <p>Dev Mode: Static Data Loaded</p>
+        <p>Engine: Procedural Generation (v1.0)</p>
       </footer>
 
       {/* Custom Keyframe animation for Shake */}
