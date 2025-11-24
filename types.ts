@@ -1,3 +1,4 @@
+
 export enum GameState {
   START = 'START',
   LOADING = 'LOADING',
@@ -28,4 +29,11 @@ export interface LevelData {
 export interface GameLevel {
   regex: string;
   items: CandidateString[];
+}
+
+export interface HighScore {
+  id: string;
+  name: string;
+  score: number;
+  date: number; // Timestamp
 }

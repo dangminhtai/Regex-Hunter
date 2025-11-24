@@ -3,12 +3,15 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameState, GameLevel, CandidateString, GameMode } from './types';
 import { generateLevel, getRegexHint } from './services/geminiService';
 import { audioService } from './services/audioService';
+import { storageService } from './services/storageService'; // Storage
 import GameButton from './components/GameButton';
 import Header from './components/Header';
 import StartScreen from './components/StartScreen';
 import RegexHUD from './components/RegexHUD';
 import GameOverlays from './components/GameOverlays';
 import SettingsModal from './components/SettingsModal';
+import LeaderboardModal from './components/LeaderboardModal'; // New
+import UsernameModal from './components/UsernameModal'; // New
 
 // Utility to generate unique IDs
 const uid = () => Math.random().toString(36).substr(2, 9);
@@ -22,8 +25,15 @@ export default function App() {
   const [message, setMessage] = useState<string>("");
   const [gameMode, setGameMode] = useState<GameMode>('search');
   const [isMuted, setIsMuted] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
+  // Modals
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [isUsernameOpen, setIsUsernameOpen] = useState(false);
+  
+  // User Data
+  const [username, setUsername] = useState("Player");
+
   // Hint State
   const [hint, setHint] = useState<string | null>(null);
   const [isHintLoading, setIsHintLoading] = useState(false);
@@ -33,9 +43,12 @@ export default function App() {
   const lastTimeRef = useRef<number | undefined>(undefined);
   const levelDataRef = useRef<GameLevel | null>(null);
   const gameStateRef = useRef<GameState>(GameState.START);
-  
-  // Ref to prevent multiple victory triggers due to frame updates
   const victoryScheduledRef = useRef(false);
+
+  // Load User Data on Mount
+  useEffect(() => {
+    setUsername(storageService.getUsername());
+  }, []);
 
   // Sync refs
   useEffect(() => {
@@ -47,32 +60,31 @@ export default function App() {
   }, [gameState]);
 
 
+  // SAVE SCORE ON GAME OVER
+  useEffect(() => {
+      if (gameState === GameState.GAME_OVER) {
+          storageService.saveScore(username, score);
+      }
+  }, [gameState, score, username]);
+
+
   const startNewLevel = useCallback(async (currentDifficulty: number, mode: GameMode) => {
     setGameState(GameState.LOADING);
     setMessage("Đang khởi tạo hệ thống...");
     setHint(null); 
-    victoryScheduledRef.current = false; // Reset victory lock
+    victoryScheduledRef.current = false; 
     
-    // Khởi tạo AudioContext nếu chưa có (cho lần chơi lại)
     audioService.init();
 
     const data = await generateLevel(currentDifficulty, mode);
-    
     const regex = new RegExp(data.regex);
     
-    // Khởi tạo items với Vật lý
+    // Khởi tạo items
     const items: CandidateString[] = data.candidates.map((text, index) => {
-      // Random X position: 10% -> 80%
       const x = Math.floor(Math.random() * 70) + 15;
-      
-      // Staggered Y start: Rơi so le nhau
-      // Mỗi item cách nhau một khoảng dựa trên độ khó.
       const gap = Math.max(15, 40 - currentDifficulty * 2); 
       const startY = -20 - (index * gap);
-
-      // Tốc độ rơi: Tăng dần theo độ khó
       const baseSpeed = 0.05 + (currentDifficulty * 0.02);
-      // Random nhẹ tốc độ để không quá đều
       const speed = baseSpeed + (Math.random() * 0.05);
 
       return {
@@ -86,19 +98,14 @@ export default function App() {
       };
     });
 
-    const newLevelData = {
-      regex: data.regex,
-      items
-    };
-
-    setLevelData(newLevelData);
+    setLevelData({ regex: data.regex, items });
     setGameState(GameState.PLAYING);
     setMessage("");
   }, []);
 
   const startGame = () => {
-    audioService.init(); // Đảm bảo audio context được resume
-    audioService.playBGM(); // Start Music
+    audioService.init(); 
+    audioService.playBGM(); 
     setScore(0);
     setLives(3);
     setDifficulty(1);
@@ -118,8 +125,6 @@ export default function App() {
     }
 
     if (lastTimeRef.current !== undefined) {
-      // const deltaTime = time - lastTimeRef.current; 
-      
       setLevelData(prev => {
         if (!prev) return null;
 
@@ -127,34 +132,27 @@ export default function App() {
         let gameOverTriggered = false;
 
         const newItems = prev.items.map(item => {
-            if (item.status !== 'idle') return item; // Đã xử lý xong thì đứng im hoặc ẩn
+            if (item.status !== 'idle') return item; 
 
-            // Cập nhật vị trí
             const newY = item.y + item.speed;
 
-            // KIỂM TRA VA CHẠM ĐÁY (Threshold 95%)
             if (newY > 95) {
                 if (item.isMatch) {
-                    // MẤT MẠNG: Chuỗi đúng mà để rơi
-                    audioService.playSFX('miss'); // SOUND EFFECT
+                    audioService.playSFX('miss');
                     livesLost++;
                     return { ...item, y: newY, status: 'missed' as const };
                 } else {
-                    // KHÔNG SAO: Chuỗi sai rơi mất
                     return { ...item, y: newY, status: 'gone' as const };
                 }
             }
-
             return { ...item, y: newY };
         });
 
-        // Side Effects logic (thực hiện ở ngoài map)
         if (livesLost > 0) {
             setLives(prevLives => {
                 const newLives = prevLives - livesLost;
                 if (newLives <= 0 && !gameOverTriggered) {
                     gameOverTriggered = true;
-                    // Trigger Game Over
                     setTimeout(() => {
                          audioService.stopBGM();
                          audioService.playSFX('gameover');
@@ -164,7 +162,6 @@ export default function App() {
                 return newLives;
             });
         }
-
         return { ...prev, items: newItems };
       });
     }
@@ -178,19 +175,12 @@ export default function App() {
     return () => cancelAnimationFrame(requestRef.current!);
   }, []);
 
-  // Check Level Complete Effect
+  // Check Level Complete
   useEffect(() => {
-      // Sử dụng victoryScheduledRef để đảm bảo logic thắng chỉ kích hoạt 1 lần duy nhất
-      // Dù levelData thay đổi liên tục do physics loop
       if (gameState === GameState.PLAYING && levelData) {
           const remainingMatches = levelData.items.filter(i => i.isMatch && i.status === 'idle');
-          
-          // Nếu không còn match nào cần tìm VÀ chưa từng lên lịch thắng
           if (remainingMatches.length === 0 && levelData.items.length > 0 && !victoryScheduledRef.current) {
-              
-              victoryScheduledRef.current = true; // KHOÁ CHỐT NGAY LẬP TỨC
-
-              // Sử dụng setTimeout fire-and-forget (không cleanup)
+              victoryScheduledRef.current = true; 
               setTimeout(() => {
                   setLives(currentLives => {
                       if (currentLives > 0) {
@@ -225,10 +215,10 @@ export default function App() {
       const isCorrect = clickedItem.isMatch;
       
       if (isCorrect) {
-        audioService.playSFX('correct'); // SOUND EFFECT
-        setScore(s => s + 10 + (difficulty * 2)); // Điểm thưởng theo độ khó
+        audioService.playSFX('correct'); 
+        setScore(s => s + 10 + (difficulty * 2)); 
       } else {
-        audioService.playSFX('wrong'); // SOUND EFFECT
+        audioService.playSFX('wrong'); 
         setLives(l => {
             const newLives = l - 1;
             if (newLives <= 0) {
@@ -251,7 +241,7 @@ export default function App() {
   };
 
   const handleLevelComplete = () => {
-    audioService.playSFX('levelup'); // SOUND EFFECT
+    audioService.playSFX('levelup'); 
     setGameState(GameState.VICTORY);
     setMessage("Level Cleared! Tăng tốc độ...");
     setTimeout(() => {
@@ -264,9 +254,20 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center overflow-hidden">
       
+      {/* MODALS */}
       <SettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
+      />
+      <LeaderboardModal 
+        isOpen={isLeaderboardOpen} 
+        onClose={() => setIsLeaderboardOpen(false)} 
+      />
+      <UsernameModal 
+        isOpen={isUsernameOpen} 
+        onClose={() => setIsUsernameOpen(false)} 
+        currentName={username}
+        onNameUpdate={setUsername}
       />
 
       <Header 
@@ -275,8 +276,10 @@ export default function App() {
         lives={lives}
         difficulty={difficulty}
         isMuted={isMuted}
+        username={username}
         onToggleMute={toggleMute}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenProfile={() => setIsUsernameOpen(true)}
       />
 
       {/* Main Game Area */}
@@ -287,7 +290,8 @@ export default function App() {
           <StartScreen 
             gameMode={gameMode} 
             setGameMode={setGameMode} 
-            onStart={startGame} 
+            onStart={startGame}
+            onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
           />
         )}
 
@@ -338,9 +342,8 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer */}
       <footer className="py-4 text-slate-600 text-[10px] text-center w-full bg-slate-900/90 border-t border-slate-800/50 z-10">
-        <p>Engine: Procedural Generation + Gemini 2.5 Flash Lite</p>
+        <p>Engine: Procedural Generation + Gemini 2.5 Flash Lite | Local Storage Enabled</p>
       </footer>
     </div>
   );
