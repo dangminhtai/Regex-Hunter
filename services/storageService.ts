@@ -14,7 +14,7 @@ const SEED_DATA: HighScore[] = [
   { id: 'seed_1', name: 'MinhTai', score: 2450, date: Date.now() - 86400000 * 2 }, 
   { id: 'seed_2', name: 'trongNhan2207', score: 2180, date: Date.now() - 86400000 * 5 },
   { id: 'seed_3', name: 'Duybuoito', score: 1950, date: Date.now() - 86400000 * 1 },
-  { id: 'seed_4', name: 'Vínhaygex123', score: 1820, date: Date.now() - 86400000 * 3 },
+  { id: 'seed_4', name: 'Vinhsaygex123', score: 1820, date: Date.now() - 86400000 * 3 },
   { id: 'seed_5', name: 'baohoang', score: 1650, date: Date.now() - 86400000 * 7 },
   { id: 'seed_6', name: 'TuanBui', score: 1400, date: Date.now() - 86400000 * 4 },
   { id: 'seed_7', name: 'leQuocHung', score: 1200, date: Date.now() - 86400000 * 6 },
