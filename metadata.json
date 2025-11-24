@@ -1,0 +1,5 @@
+{
+  "name": "Regex Hunter",
+  "description": "Trò chơi luyện tập Regex: Chọn chuỗi khớp với mẫu để ghi điểm. Sử dụng Gemini AI để tạo đề bài vô tận.",
+  "requestFramePermissions": []
+}
