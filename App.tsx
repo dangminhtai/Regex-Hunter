@@ -4,7 +4,11 @@ import { GameState, GameLevel, CandidateString, GameMode } from './types';
 import { generateLevel, getRegexHint } from './services/geminiService';
 import { audioService } from './services/audioService';
 import GameButton from './components/GameButton';
-import { Terminal, Heart, Trophy, RefreshCw, Play, AlertTriangle, ShieldCheck, CheckCircle2, Search, ArrowRightFromLine, Maximize2, Lightbulb, Loader2, Volume2, VolumeX } from 'lucide-react';
+import Header from './components/Header';
+import StartScreen from './components/StartScreen';
+import RegexHUD from './components/RegexHUD';
+import GameOverlays from './components/GameOverlays';
+import SettingsModal from './components/SettingsModal';
 
 // Utility to generate unique IDs
 const uid = () => Math.random().toString(36).substr(2, 9);
@@ -18,6 +22,7 @@ export default function App() {
   const [message, setMessage] = useState<string>("");
   const [gameMode, setGameMode] = useState<GameMode>('search');
   const [isMuted, setIsMuted] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // Hint State
   const [hint, setHint] = useState<string | null>(null);
@@ -28,6 +33,9 @@ export default function App() {
   const lastTimeRef = useRef<number | undefined>(undefined);
   const levelDataRef = useRef<GameLevel | null>(null);
   const gameStateRef = useRef<GameState>(GameState.START);
+  
+  // Ref to prevent multiple victory triggers due to frame updates
+  const victoryScheduledRef = useRef(false);
 
   // Sync refs
   useEffect(() => {
@@ -43,20 +51,22 @@ export default function App() {
     setGameState(GameState.LOADING);
     setMessage("Đang khởi tạo hệ thống...");
     setHint(null); 
+    victoryScheduledRef.current = false; // Reset victory lock
     
+    // Khởi tạo AudioContext nếu chưa có (cho lần chơi lại)
+    audioService.init();
+
     const data = await generateLevel(currentDifficulty, mode);
     
     const regex = new RegExp(data.regex);
-    const count = data.candidates.length;
     
     // Khởi tạo items với Vật lý
     const items: CandidateString[] = data.candidates.map((text, index) => {
-      // Random X position: 10% -> 90% để không bị sát lề
-      const x = Math.floor(Math.random() * 80) + 10;
+      // Random X position: 10% -> 80%
+      const x = Math.floor(Math.random() * 70) + 15;
       
       // Staggered Y start: Rơi so le nhau
       // Mỗi item cách nhau một khoảng dựa trên độ khó.
-      // Càng khó thì khoảng cách càng gần (mật độ dày hơn)
       const gap = Math.max(15, 40 - currentDifficulty * 2); 
       const startY = -20 - (index * gap);
 
@@ -87,6 +97,7 @@ export default function App() {
   }, []);
 
   const startGame = () => {
+    audioService.init(); // Đảm bảo audio context được resume
     audioService.playBGM(); // Start Music
     setScore(0);
     setLives(3);
@@ -114,7 +125,6 @@ export default function App() {
 
         let livesLost = 0;
         let gameOverTriggered = false;
-        // let levelCompleteTriggered = false;
 
         const newItems = prev.items.map(item => {
             if (item.status !== 'idle') return item; // Đã xử lý xong thì đứng im hoặc ẩn
@@ -155,8 +165,6 @@ export default function App() {
             });
         }
 
-        // Check Win logic handles in useEffect
-
         return { ...prev, items: newItems };
       });
     }
@@ -172,17 +180,28 @@ export default function App() {
 
   // Check Level Complete Effect
   useEffect(() => {
+      // Sử dụng victoryScheduledRef để đảm bảo logic thắng chỉ kích hoạt 1 lần duy nhất
+      // Dù levelData thay đổi liên tục do physics loop
       if (gameState === GameState.PLAYING && levelData) {
           const remainingMatches = levelData.items.filter(i => i.isMatch && i.status === 'idle');
-          if (remainingMatches.length === 0 && levelData.items.length > 0) {
-              // Level finished (thắng hoặc thua do hết mạng đã check ở loop)
-              const timer = setTimeout(() => {
-                  if (lives > 0) handleLevelComplete();
-              }, 1000);
-              return () => clearTimeout(timer);
+          
+          // Nếu không còn match nào cần tìm VÀ chưa từng lên lịch thắng
+          if (remainingMatches.length === 0 && levelData.items.length > 0 && !victoryScheduledRef.current) {
+              
+              victoryScheduledRef.current = true; // KHOÁ CHỐT NGAY LẬP TỨC
+
+              // Sử dụng setTimeout fire-and-forget (không cleanup)
+              setTimeout(() => {
+                  setLives(currentLives => {
+                      if (currentLives > 0) {
+                          handleLevelComplete();
+                      }
+                      return currentLives;
+                  });
+              }, 800);
           }
       }
-  }, [levelData, gameState, lives]);
+  }, [levelData, gameState]);
 
 
   const handleGetHint = async () => {
@@ -195,6 +214,8 @@ export default function App() {
 
   const handleItemClick = (id: string) => {
     if (gameState !== GameState.PLAYING || !levelData) return;
+
+    audioService.init();
 
     setLevelData(prev => {
       if (!prev) return null;
@@ -241,145 +262,57 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center p-4 overflow-hidden">
-      {/* Header */}
-      <header className="w-full max-w-4xl flex justify-between items-center mb-4 border-b border-slate-700 pb-4 z-50 bg-slate-900/80 backdrop-blur-md sticky top-0">
-        <div className="flex items-center gap-2">
-          <Terminal className="text-emerald-400" />
-          <h1 className="text-xl md:text-2xl font-bold tracking-tighter">REGEX <span className="text-emerald-400">HUNTER</span></h1>
-        </div>
-        
-        <div className="flex items-center gap-4">
-             {/* Volume Toggle */}
-            <button onClick={toggleMute} className="text-slate-400 hover:text-white transition-colors">
-                {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-            </button>
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center overflow-hidden">
+      
+      <SettingsModal 
+        isOpen={isSettingsOpen} 
+        onClose={() => setIsSettingsOpen(false)} 
+      />
 
-            {gameState !== GameState.START && (
-                <div className="flex gap-4 md:gap-6 font-mono text-sm md:text-base">
-                <div className={`flex items-center gap-2 ${lives === 1 ? 'text-red-500 animate-pulse font-bold' : 'text-red-400'}`}>
-                    <Heart className="fill-current" size={20} />
-                    <span>x{lives}</span>
-                </div>
-                <div className="flex items-center gap-2 text-yellow-400">
-                    <Trophy className="fill-current" size={20} />
-                    <span>{score}</span>
-                </div>
-                <div className="flex items-center gap-2 text-blue-400 hidden sm:flex">
-                    <ShieldCheck size={20} />
-                    <span>LVL {difficulty}</span>
-                </div>
-                </div>
-            )}
-        </div>
-      </header>
+      <Header 
+        gameState={gameState}
+        score={score}
+        lives={lives}
+        difficulty={difficulty}
+        isMuted={isMuted}
+        onToggleMute={toggleMute}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
 
-      {/* Game Area */}
-      <main className="w-full max-w-4xl flex-1 flex flex-col items-center relative">
+      {/* Main Game Area */}
+      <main className="w-full max-w-4xl flex-1 flex flex-col items-center relative px-2 md:px-4 pb-4">
         
-        {/* State: START */}
+        {/* START SCREEN */}
         {gameState === GameState.START && (
-          <div className="text-center mt-10 space-y-6 animate-fade-in w-full max-w-lg z-20">
-            <div className="w-24 h-24 bg-slate-800 rounded-full flex items-center justify-center mx-auto border-4 border-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
-                <Terminal size={48} className="text-emerald-400" />
-            </div>
-            <h2 className="text-4xl font-bold">Regex Hunter</h2>
-            <p className="text-slate-400">
-              Mưa Regex đang trút xuống! Hãy bắn hạ các chuỗi khớp mẫu trước khi chúng chạm đất.
-            </p>
-
-            {/* Mode Selection */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 my-8">
-                <button 
-                  onClick={() => setGameMode('search')}
-                  className={`p-4 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${gameMode === 'search' ? 'bg-slate-800 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-slate-900 border-slate-700 text-slate-500 hover:border-slate-500'}`}
-                >
-                    <Search size={24} />
-                    <span className="font-bold text-sm">SEARCH</span>
-                    <span className="text-xs opacity-70">Tìm chuỗi con</span>
-                </button>
-
-                <button 
-                  onClick={() => setGameMode('match')}
-                  className={`p-4 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${gameMode === 'match' ? 'bg-slate-800 border-blue-500 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.2)]' : 'bg-slate-900 border-slate-700 text-slate-500 hover:border-slate-500'}`}
-                >
-                    <ArrowRightFromLine size={24} />
-                    <span className="font-bold text-sm">MATCH START</span>
-                    <span className="text-xs opacity-70">Khớp đầu chuỗi</span>
-                </button>
-
-                <button 
-                  onClick={() => setGameMode('fullmatch')}
-                  className={`p-4 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${gameMode === 'fullmatch' ? 'bg-slate-800 border-purple-500 text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-slate-900 border-slate-700 text-slate-500 hover:border-slate-500'}`}
-                >
-                    <Maximize2 size={24} />
-                    <span className="font-bold text-sm">FULL MATCH</span>
-                    <span className="text-xs opacity-70">Khớp toàn bộ</span>
-                </button>
-            </div>
-
-            <button 
-              onClick={startGame}
-              className="w-full px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2 hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] text-lg"
-            >
-              <Play size={24} /> BẮT ĐẦU CHIẾN
-            </button>
-          </div>
+          <StartScreen 
+            gameMode={gameMode} 
+            setGameMode={setGameMode} 
+            onStart={startGame} 
+          />
         )}
 
-        {/* State: LOADING */}
+        {/* LOADING SCREEN */}
         {gameState === GameState.LOADING && (
-           <div className="flex flex-col items-center justify-center h-64 space-y-4 z-20">
-             <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-             <p className="text-emerald-400 font-mono animate-pulse">{message}</p>
+           <div className="flex flex-col items-center justify-center h-64 space-y-4 z-20 mt-20">
+             <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+             <p className="text-emerald-400 font-mono animate-pulse text-lg">{message}</p>
            </div>
         )}
 
-        {/* State: PLAYING / VICTORY / GAME_OVER */}
+        {/* ACTIVE GAMEPLAY */}
         {(gameState === GameState.PLAYING || gameState === GameState.VICTORY || gameState === GameState.GAME_OVER) && levelData && (
-          <div className="w-full h-[80vh] flex flex-col">
+          <div className="w-full h-full flex flex-col">
             
-            {/* Regex HUD (Top) */}
-            <div className="relative z-30 mb-4 shrink-0">
-                <div className="bg-slate-900/90 border border-slate-600 rounded-xl p-4 text-center relative overflow-hidden shadow-2xl">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50"></div>
-                    <div className="flex justify-center items-center gap-2 text-slate-500 text-xs mb-1 uppercase tracking-widest font-bold">
-                        <span>MỤC TIÊU:</span>
-                        {gameMode === 'search' && <span className="text-emerald-400 flex items-center gap-1"><Search size={12}/> Search</span>}
-                        {gameMode === 'match' && <span className="text-blue-400 flex items-center gap-1"><ArrowRightFromLine size={12}/> Match Start</span>}
-                        {gameMode === 'fullmatch' && <span className="text-purple-400 flex items-center gap-1"><Maximize2 size={12}/> Full Match</span>}
-                    </div>
-                    <code className="block text-2xl md:text-4xl font-mono text-emerald-400 neon-text break-words px-2">
-                        /{levelData.regex}/
-                    </code>
-                </div>
+            <RegexHUD 
+                regex={levelData.regex}
+                gameMode={gameMode}
+                hint={hint}
+                isHintLoading={isHintLoading}
+                onGetHint={handleGetHint}
+            />
 
-                {/* Hint Button */}
-                <div className="flex flex-col items-center mt-2">
-                    {!hint ? (
-                        <button 
-                            onClick={handleGetHint}
-                            disabled={isHintLoading || gameState !== GameState.PLAYING}
-                            className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border transition-all ${
-                                isHintLoading 
-                                ? 'bg-slate-800 text-slate-500 border-slate-700' 
-                                : 'bg-slate-800 text-yellow-400 border-yellow-500/50 hover:bg-yellow-900/20 hover:border-yellow-400'
-                            }`}
-                        >
-                            {isHintLoading ? <Loader2 size={12} className="animate-spin"/> : <Lightbulb size={12} />}
-                            {isHintLoading ? "Đang tải..." : "Gợi ý"}
-                        </button>
-                    ) : (
-                        <div className="animate-in fade-in slide-in-from-top-2 bg-yellow-900/80 border border-yellow-500/30 text-yellow-200 px-4 py-2 rounded-lg text-xs max-w-xl text-center backdrop-blur-sm shadow-lg">
-                            <span className="font-bold text-yellow-500 mr-2">[GEMINI]:</span>
-                            {hint}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Game Board (Falling Area) */}
-            <div className="relative w-full flex-1 bg-slate-800/30 rounded-xl border border-slate-700/50 overflow-hidden shadow-inner">
+            {/* Falling Area */}
+            <div className="relative w-full flex-1 bg-slate-800/30 rounded-xl border border-slate-700/50 overflow-hidden shadow-inner min-h-[50vh] md:min-h-[60vh]">
                 {/* Danger Zone Line */}
                 <div className="absolute bottom-0 left-0 w-full h-[5%] bg-red-900/20 border-t border-red-500/30 pointer-events-none z-0 flex items-end justify-center">
                     <span className="text-[10px] text-red-500/50 uppercase tracking-widest mb-1 font-bold">Danger Zone</span>
@@ -393,61 +326,22 @@ export default function App() {
                         gameState={gameState}
                     />
                 ))}
+
+                <GameOverlays 
+                    gameState={gameState}
+                    message={message}
+                    score={score}
+                    onRestart={startGame}
+                />
             </div>
-
-            {/* Overlay Messages */}
-            {gameState === GameState.VICTORY && (
-                <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in zoom-in duration-300">
-                    <div className="text-center p-8 bg-slate-900 border border-emerald-500 rounded-2xl shadow-2xl">
-                        <CheckCircle2 size={64} className="text-emerald-400 mx-auto mb-4" />
-                        <h2 className="text-3xl font-bold text-white mb-2">QUA MÀN!</h2>
-                        <p className="text-emerald-300 mb-4">{message}</p>
-                    </div>
-                </div>
-            )}
-
-            {gameState === GameState.GAME_OVER && (
-                 <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in duration-500">
-                 <div className="text-center p-8 bg-slate-900 border border-red-600 rounded-2xl shadow-[0_0_50px_rgba(220,38,38,0.2)] max-w-md w-full mx-4">
-                     <AlertTriangle size={64} className="text-red-500 mx-auto mb-4" />
-                     <h2 className="text-4xl font-bold text-red-500 mb-2">GAME OVER</h2>
-                     <p className="text-slate-300 mb-6">Mưa rơi hết rồi...</p>
-                     
-                     <div className="bg-slate-800 p-4 rounded-lg mb-6">
-                        <p className="text-slate-400 text-sm">Điểm số cuối cùng</p>
-                        <p className="text-3xl font-mono text-yellow-400 font-bold">{score}</p>
-                     </div>
-
-                     <button 
-                       onClick={startGame}
-                       className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
-                     >
-                       <RefreshCw size={20} /> CHƠI LẠI
-                     </button>
-                 </div>
-             </div>
-            )}
-
           </div>
         )}
       </main>
 
       {/* Footer */}
-      <footer className="mt-2 text-slate-600 text-[10px] text-center">
+      <footer className="py-4 text-slate-600 text-[10px] text-center w-full bg-slate-900/90 border-t border-slate-800/50 z-10">
         <p>Engine: Procedural Generation + Gemini 2.5 Flash Lite</p>
       </footer>
-
-      {/* Custom Keyframe animation for Shake */}
-      <style>{`
-        @keyframes shake {
-          0%, 100% { transform: translateX(-50%) rotate(0deg); }
-          25% { transform: translateX(calc(-50% - 5px)) rotate(-5deg); }
-          75% { transform: translateX(calc(-50% + 5px)) rotate(5deg); }
-        }
-        .animate-shake {
-          animation: shake 0.3s ease-in-out;
-        }
-      `}</style>
     </div>
   );
 }
