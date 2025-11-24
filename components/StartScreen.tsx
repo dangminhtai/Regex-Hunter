@@ -1,7 +1,8 @@
 
 import React from 'react';
-import { Terminal, Search, ArrowRightFromLine, Maximize2, Play } from 'lucide-react';
+import { Search, ArrowRightFromLine, Maximize2, Play } from 'lucide-react';
 import { GameMode } from '../types';
+import GameLogo from './icons/GameLogo';
 
 interface Props {
     gameMode: GameMode;
@@ -12,12 +13,9 @@ interface Props {
 const StartScreen: React.FC<Props> = ({ gameMode, setGameMode, onStart }) => {
     return (
         <div className="text-center mt-6 md:mt-10 space-y-6 animate-fade-in w-full max-w-lg z-20 px-4">
-            <div className="relative group cursor-default">
-                <div className="absolute inset-0 bg-emerald-500/20 blur-xl rounded-full group-hover:bg-emerald-500/30 transition-all duration-500"></div>
-                <div className="relative w-24 h-24 bg-slate-900 rounded-2xl flex items-center justify-center mx-auto border border-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.2)] group-hover:scale-105 transition-transform duration-300">
-                    <Terminal size={48} className="text-emerald-400" />
-                </div>
-            </div>
+            
+            {/* Reusable Logo Component */}
+            <GameLogo size="lg" />
             
             <div className="space-y-2">
                 <h2 className="text-4xl md:text-5xl font-bold text-white tracking-tight">

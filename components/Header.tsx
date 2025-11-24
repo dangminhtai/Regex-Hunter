@@ -1,7 +1,8 @@
 
 import React from 'react';
-import { Terminal, Heart, Trophy, ShieldCheck, Settings, Volume2, VolumeX } from 'lucide-react';
+import { Heart, Trophy, ShieldCheck, Settings, Volume2, VolumeX } from 'lucide-react';
 import { GameState } from '../types';
+import GameLogo from './icons/GameLogo';
 
 interface Props {
     gameState: GameState;
@@ -17,9 +18,7 @@ const Header: React.FC<Props> = ({ gameState, score, lives, difficulty, isMuted,
     return (
         <header className="w-full max-w-4xl flex justify-between items-center mb-4 border-b border-slate-700 pb-4 z-50 bg-slate-900/80 backdrop-blur-md sticky top-0 px-4 pt-4">
             <div className="flex items-center gap-2">
-                <div className="bg-slate-800 p-1.5 rounded-lg border border-slate-700">
-                    <Terminal className="text-emerald-400 w-5 h-5 md:w-6 md:h-6" />
-                </div>
+                <GameLogo />
                 <h1 className="text-xl md:text-2xl font-bold tracking-tighter hidden md:block">
                     REGEX <span className="text-emerald-400">HUNTER</span>
                 </h1>
