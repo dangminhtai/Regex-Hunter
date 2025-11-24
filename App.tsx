@@ -1,9 +1,10 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameState, GameLevel, CandidateString, GameMode } from './types';
 import { generateLevel, getRegexHint } from './services/geminiService';
+import { audioService } from './services/audioService';
 import GameButton from './components/GameButton';
-import { Terminal, Heart, Trophy, RefreshCw, Play, AlertTriangle, ShieldCheck, CheckCircle2, Search, ArrowRightFromLine, Maximize2, Lightbulb, Loader2 } from 'lucide-react';
+import { Terminal, Heart, Trophy, RefreshCw, Play, AlertTriangle, ShieldCheck, CheckCircle2, Search, ArrowRightFromLine, Maximize2, Lightbulb, Loader2, Volume2, VolumeX } from 'lucide-react';
 
 // Utility to generate unique IDs
 const uid = () => Math.random().toString(36).substr(2, 9);
@@ -16,53 +17,180 @@ export default function App() {
   const [score, setScore] = useState(0);
   const [message, setMessage] = useState<string>("");
   const [gameMode, setGameMode] = useState<GameMode>('search');
+  const [isMuted, setIsMuted] = useState(false);
   
   // Hint State
   const [hint, setHint] = useState<string | null>(null);
   const [isHintLoading, setIsHintLoading] = useState(false);
 
+  // Refs for Game Loop to avoid closure staleness
+  const requestRef = useRef<number>(0);
+  const lastTimeRef = useRef<number | undefined>(undefined);
+  const levelDataRef = useRef<GameLevel | null>(null);
+  const gameStateRef = useRef<GameState>(GameState.START);
+
+  // Sync refs
+  useEffect(() => {
+      levelDataRef.current = levelData;
+  }, [levelData]);
+
+  useEffect(() => {
+      gameStateRef.current = gameState;
+  }, [gameState]);
+
+
   const startNewLevel = useCallback(async (currentDifficulty: number, mode: GameMode) => {
     setGameState(GameState.LOADING);
     setMessage("Đang khởi tạo hệ thống...");
-    setHint(null); // Reset hint
+    setHint(null); 
     
     const data = await generateLevel(currentDifficulty, mode);
     
-    // Validate candidates locally - Double check logic
     const regex = new RegExp(data.regex);
-    const items: CandidateString[] = data.candidates.map(text => ({
-      id: uid(),
-      text,
-      isMatch: regex.test(text),
-      status: 'idle'
-    }));
+    const count = data.candidates.length;
+    
+    // Khởi tạo items với Vật lý
+    const items: CandidateString[] = data.candidates.map((text, index) => {
+      // Random X position: 10% -> 90% để không bị sát lề
+      const x = Math.floor(Math.random() * 80) + 10;
+      
+      // Staggered Y start: Rơi so le nhau
+      // Mỗi item cách nhau một khoảng dựa trên độ khó.
+      // Càng khó thì khoảng cách càng gần (mật độ dày hơn)
+      const gap = Math.max(15, 40 - currentDifficulty * 2); 
+      const startY = -20 - (index * gap);
 
-    setLevelData({
+      // Tốc độ rơi: Tăng dần theo độ khó
+      const baseSpeed = 0.05 + (currentDifficulty * 0.02);
+      // Random nhẹ tốc độ để không quá đều
+      const speed = baseSpeed + (Math.random() * 0.05);
+
+      return {
+        id: uid(),
+        text,
+        isMatch: regex.test(text),
+        status: 'idle',
+        x,
+        y: startY,
+        speed
+      };
+    });
+
+    const newLevelData = {
       regex: data.regex,
       items
-    });
-    
+    };
+
+    setLevelData(newLevelData);
     setGameState(GameState.PLAYING);
     setMessage("");
   }, []);
 
   const startGame = () => {
+    audioService.playBGM(); // Start Music
     setScore(0);
     setLives(3);
     setDifficulty(1);
     startNewLevel(1, gameMode);
   };
 
+  const toggleMute = () => {
+      const muted = audioService.toggleMute();
+      setIsMuted(muted);
+  };
+
+  // --- GAME LOOP ---
+  const animate = (time: number) => {
+    if (gameStateRef.current !== GameState.PLAYING || !levelDataRef.current) {
+        requestRef.current = requestAnimationFrame(animate);
+        return;
+    }
+
+    if (lastTimeRef.current !== undefined) {
+      // const deltaTime = time - lastTimeRef.current; 
+      
+      setLevelData(prev => {
+        if (!prev) return null;
+
+        let livesLost = 0;
+        let gameOverTriggered = false;
+        // let levelCompleteTriggered = false;
+
+        const newItems = prev.items.map(item => {
+            if (item.status !== 'idle') return item; // Đã xử lý xong thì đứng im hoặc ẩn
+
+            // Cập nhật vị trí
+            const newY = item.y + item.speed;
+
+            // KIỂM TRA VA CHẠM ĐÁY (Threshold 95%)
+            if (newY > 95) {
+                if (item.isMatch) {
+                    // MẤT MẠNG: Chuỗi đúng mà để rơi
+                    audioService.playSFX('miss'); // SOUND EFFECT
+                    livesLost++;
+                    return { ...item, y: newY, status: 'missed' as const };
+                } else {
+                    // KHÔNG SAO: Chuỗi sai rơi mất
+                    return { ...item, y: newY, status: 'gone' as const };
+                }
+            }
+
+            return { ...item, y: newY };
+        });
+
+        // Side Effects logic (thực hiện ở ngoài map)
+        if (livesLost > 0) {
+            setLives(prevLives => {
+                const newLives = prevLives - livesLost;
+                if (newLives <= 0 && !gameOverTriggered) {
+                    gameOverTriggered = true;
+                    // Trigger Game Over
+                    setTimeout(() => {
+                         audioService.stopBGM();
+                         audioService.playSFX('gameover');
+                         setGameState(GameState.GAME_OVER);
+                    }, 0);
+                }
+                return newLives;
+            });
+        }
+
+        // Check Win logic handles in useEffect
+
+        return { ...prev, items: newItems };
+      });
+    }
+    
+    lastTimeRef.current = time;
+    requestRef.current = requestAnimationFrame(animate);
+  };
+
+  useEffect(() => {
+    requestRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(requestRef.current!);
+  }, []);
+
+  // Check Level Complete Effect
+  useEffect(() => {
+      if (gameState === GameState.PLAYING && levelData) {
+          const remainingMatches = levelData.items.filter(i => i.isMatch && i.status === 'idle');
+          if (remainingMatches.length === 0 && levelData.items.length > 0) {
+              // Level finished (thắng hoặc thua do hết mạng đã check ở loop)
+              const timer = setTimeout(() => {
+                  if (lives > 0) handleLevelComplete();
+              }, 1000);
+              return () => clearTimeout(timer);
+          }
+      }
+  }, [levelData, gameState, lives]);
+
+
   const handleGetHint = async () => {
     if (!levelData || isHintLoading || hint) return;
-    
     setIsHintLoading(true);
     const hintText = await getRegexHint(levelData.regex);
     setHint(hintText);
     setIsHintLoading(false);
-    
-    // Trừ điểm nhẹ nếu dùng gợi ý để công bằng (tuỳ chọn)
-    // setScore(s => Math.max(0, s - 5));
   };
 
   const handleItemClick = (id: string) => {
@@ -70,88 +198,80 @@ export default function App() {
 
     setLevelData(prev => {
       if (!prev) return null;
-
       const clickedItem = prev.items.find(i => i.id === id);
-      if (!clickedItem) return prev;
+      if (!clickedItem || clickedItem.status !== 'idle') return prev;
 
       const isCorrect = clickedItem.isMatch;
       
-      // Update item status
+      if (isCorrect) {
+        audioService.playSFX('correct'); // SOUND EFFECT
+        setScore(s => s + 10 + (difficulty * 2)); // Điểm thưởng theo độ khó
+      } else {
+        audioService.playSFX('wrong'); // SOUND EFFECT
+        setLives(l => {
+            const newLives = l - 1;
+            if (newLives <= 0) {
+                audioService.stopBGM();
+                audioService.playSFX('gameover');
+                setGameState(GameState.GAME_OVER);
+            }
+            return newLives;
+        });
+      }
+
       const newItems = prev.items.map(item => 
         item.id === id 
           ? { ...item, status: isCorrect ? 'correct' as const : 'wrong' as const } 
           : item
       );
 
-      // Game Logic Side Effects
-      if (isCorrect) {
-        setScore(s => s + 10);
-        // Check win condition for level
-        const remainingMatches = newItems.filter(i => i.isMatch && i.status === 'idle');
-        if (remainingMatches.length === 0) {
-          setTimeout(() => handleLevelComplete(), 500);
-        }
-      } else {
-        setLives(l => {
-          const newLives = l - 1;
-          if (newLives <= 0) {
-            setTimeout(() => handleGameOver(newItems), 500);
-          }
-          return newLives;
-        });
-      }
-
       return { ...prev, items: newItems };
     });
   };
 
   const handleLevelComplete = () => {
+    audioService.playSFX('levelup'); // SOUND EFFECT
     setGameState(GameState.VICTORY);
-    setMessage("Level Complete! Đang tăng độ khó...");
+    setMessage("Level Cleared! Tăng tốc độ...");
     setTimeout(() => {
       const nextDiff = difficulty + 1;
       setDifficulty(nextDiff);
       startNewLevel(nextDiff, gameMode);
-    }, 1500);
-  };
-
-  const handleGameOver = (finalItems: CandidateString[]) => {
-    setGameState(GameState.GAME_OVER);
-    // Reveal missed items
-    setLevelData(prev => {
-        if(!prev) return null;
-        return {
-            ...prev,
-            items: finalItems.map(i => i.isMatch && i.status === 'idle' ? {...i, status: 'missed'} : i)
-        }
-    })
+    }, 2000);
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center p-4">
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center p-4 overflow-hidden">
       {/* Header */}
-      <header className="w-full max-w-4xl flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
+      <header className="w-full max-w-4xl flex justify-between items-center mb-4 border-b border-slate-700 pb-4 z-50 bg-slate-900/80 backdrop-blur-md sticky top-0">
         <div className="flex items-center gap-2">
           <Terminal className="text-emerald-400" />
-          <h1 className="text-2xl font-bold tracking-tighter">REGEX <span className="text-emerald-400">HUNTER</span></h1>
+          <h1 className="text-xl md:text-2xl font-bold tracking-tighter">REGEX <span className="text-emerald-400">HUNTER</span></h1>
         </div>
         
-        {gameState !== GameState.START && (
-            <div className="flex gap-4 md:gap-6 font-mono text-sm md:text-base">
-            <div className="flex items-center gap-2 text-red-400">
-                <Heart className={`fill-current ${lives <= 1 ? 'animate-pulse' : ''}`} size={20} />
-                <span>x{lives}</span>
-            </div>
-            <div className="flex items-center gap-2 text-yellow-400">
-                <Trophy className="fill-current" size={20} />
-                <span>{score}</span>
-            </div>
-            <div className="flex items-center gap-2 text-blue-400 hidden sm:flex">
-                <ShieldCheck size={20} />
-                <span>LVL {difficulty}</span>
-            </div>
-            </div>
-        )}
+        <div className="flex items-center gap-4">
+             {/* Volume Toggle */}
+            <button onClick={toggleMute} className="text-slate-400 hover:text-white transition-colors">
+                {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+            </button>
+
+            {gameState !== GameState.START && (
+                <div className="flex gap-4 md:gap-6 font-mono text-sm md:text-base">
+                <div className={`flex items-center gap-2 ${lives === 1 ? 'text-red-500 animate-pulse font-bold' : 'text-red-400'}`}>
+                    <Heart className="fill-current" size={20} />
+                    <span>x{lives}</span>
+                </div>
+                <div className="flex items-center gap-2 text-yellow-400">
+                    <Trophy className="fill-current" size={20} />
+                    <span>{score}</span>
+                </div>
+                <div className="flex items-center gap-2 text-blue-400 hidden sm:flex">
+                    <ShieldCheck size={20} />
+                    <span>LVL {difficulty}</span>
+                </div>
+                </div>
+            )}
+        </div>
       </header>
 
       {/* Game Area */}
@@ -159,13 +279,13 @@ export default function App() {
         
         {/* State: START */}
         {gameState === GameState.START && (
-          <div className="text-center mt-10 space-y-6 animate-fade-in w-full max-w-lg">
+          <div className="text-center mt-10 space-y-6 animate-fade-in w-full max-w-lg z-20">
             <div className="w-24 h-24 bg-slate-800 rounded-full flex items-center justify-center mx-auto border-4 border-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
                 <Terminal size={48} className="text-emerald-400" />
             </div>
             <h2 className="text-4xl font-bold">Regex Hunter</h2>
             <p className="text-slate-400">
-              Chọn chế độ và chứng minh kỹ năng Regex của bạn.
+              Mưa Regex đang trút xuống! Hãy bắn hạ các chuỗi khớp mẫu trước khi chúng chạm đất.
             </p>
 
             {/* Mode Selection */}
@@ -209,48 +329,48 @@ export default function App() {
 
         {/* State: LOADING */}
         {gameState === GameState.LOADING && (
-           <div className="flex flex-col items-center justify-center h-64 space-y-4">
+           <div className="flex flex-col items-center justify-center h-64 space-y-4 z-20">
              <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
              <p className="text-emerald-400 font-mono animate-pulse">{message}</p>
            </div>
         )}
 
-        {/* State: PLAYING / VICTORY / GAME_OVER (Show board) */}
+        {/* State: PLAYING / VICTORY / GAME_OVER */}
         {(gameState === GameState.PLAYING || gameState === GameState.VICTORY || gameState === GameState.GAME_OVER) && levelData && (
-          <div className="w-full space-y-8 animate-fade-in">
+          <div className="w-full h-[80vh] flex flex-col">
             
-            {/* Regex Display */}
-            <div className="relative">
-                <div className="bg-black/50 border border-slate-700 rounded-xl p-6 text-center relative overflow-hidden group">
+            {/* Regex HUD (Top) */}
+            <div className="relative z-30 mb-4 shrink-0">
+                <div className="bg-slate-900/90 border border-slate-600 rounded-xl p-4 text-center relative overflow-hidden shadow-2xl">
                     <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent opacity-50"></div>
-                    <div className="flex justify-center items-center gap-2 text-slate-500 text-sm mb-2 uppercase tracking-widest font-bold">
+                    <div className="flex justify-center items-center gap-2 text-slate-500 text-xs mb-1 uppercase tracking-widest font-bold">
                         <span>MỤC TIÊU:</span>
-                        {gameMode === 'search' && <span className="text-emerald-400 flex items-center gap-1"><Search size={14}/> Search</span>}
-                        {gameMode === 'match' && <span className="text-blue-400 flex items-center gap-1"><ArrowRightFromLine size={14}/> Match Start</span>}
-                        {gameMode === 'fullmatch' && <span className="text-purple-400 flex items-center gap-1"><Maximize2 size={14}/> Full Match</span>}
+                        {gameMode === 'search' && <span className="text-emerald-400 flex items-center gap-1"><Search size={12}/> Search</span>}
+                        {gameMode === 'match' && <span className="text-blue-400 flex items-center gap-1"><ArrowRightFromLine size={12}/> Match Start</span>}
+                        {gameMode === 'fullmatch' && <span className="text-purple-400 flex items-center gap-1"><Maximize2 size={12}/> Full Match</span>}
                     </div>
-                    <code className="block text-3xl md:text-5xl font-mono text-emerald-400 neon-text break-words px-2">
+                    <code className="block text-2xl md:text-4xl font-mono text-emerald-400 neon-text break-words px-2">
                         /{levelData.regex}/
                     </code>
                 </div>
 
-                {/* Hint Button & Display */}
-                <div className="flex flex-col items-center mt-4">
+                {/* Hint Button */}
+                <div className="flex flex-col items-center mt-2">
                     {!hint ? (
                         <button 
                             onClick={handleGetHint}
                             disabled={isHintLoading || gameState !== GameState.PLAYING}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold border transition-all ${
+                            className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold border transition-all ${
                                 isHintLoading 
                                 ? 'bg-slate-800 text-slate-500 border-slate-700' 
                                 : 'bg-slate-800 text-yellow-400 border-yellow-500/50 hover:bg-yellow-900/20 hover:border-yellow-400'
                             }`}
                         >
-                            {isHintLoading ? <Loader2 size={16} className="animate-spin"/> : <Lightbulb size={16} />}
-                            {isHintLoading ? "Đang hỏi Gemini..." : "Gợi ý AI"}
+                            {isHintLoading ? <Loader2 size={12} className="animate-spin"/> : <Lightbulb size={12} />}
+                            {isHintLoading ? "Đang tải..." : "Gợi ý"}
                         </button>
                     ) : (
-                        <div className="animate-in fade-in slide-in-from-top-2 bg-yellow-900/20 border border-yellow-500/30 text-yellow-200 px-4 py-3 rounded-lg text-sm max-w-2xl text-center">
+                        <div className="animate-in fade-in slide-in-from-top-2 bg-yellow-900/80 border border-yellow-500/30 text-yellow-200 px-4 py-2 rounded-lg text-xs max-w-xl text-center backdrop-blur-sm shadow-lg">
                             <span className="font-bold text-yellow-500 mr-2">[GEMINI]:</span>
                             {hint}
                         </div>
@@ -258,35 +378,40 @@ export default function App() {
                 </div>
             </div>
 
-            {/* Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-20">
-              {levelData.items.map(item => (
-                <GameButton 
-                  key={item.id} 
-                  item={item} 
-                  onClick={handleItemClick}
-                  gameState={gameState}
-                />
-              ))}
+            {/* Game Board (Falling Area) */}
+            <div className="relative w-full flex-1 bg-slate-800/30 rounded-xl border border-slate-700/50 overflow-hidden shadow-inner">
+                {/* Danger Zone Line */}
+                <div className="absolute bottom-0 left-0 w-full h-[5%] bg-red-900/20 border-t border-red-500/30 pointer-events-none z-0 flex items-end justify-center">
+                    <span className="text-[10px] text-red-500/50 uppercase tracking-widest mb-1 font-bold">Danger Zone</span>
+                </div>
+
+                {levelData.items.map(item => (
+                    <GameButton 
+                        key={item.id} 
+                        item={item} 
+                        onClick={handleItemClick}
+                        gameState={gameState}
+                    />
+                ))}
             </div>
 
             {/* Overlay Messages */}
             {gameState === GameState.VICTORY && (
-                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in zoom-in duration-300">
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in zoom-in duration-300">
                     <div className="text-center p-8 bg-slate-900 border border-emerald-500 rounded-2xl shadow-2xl">
                         <CheckCircle2 size={64} className="text-emerald-400 mx-auto mb-4" />
-                        <h2 className="text-3xl font-bold text-white mb-2">NHIỆM VỤ HOÀN THÀNH</h2>
+                        <h2 className="text-3xl font-bold text-white mb-2">QUA MÀN!</h2>
                         <p className="text-emerald-300 mb-4">{message}</p>
                     </div>
                 </div>
             )}
 
             {gameState === GameState.GAME_OVER && (
-                 <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in duration-500">
+                 <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm animate-in fade-in duration-500">
                  <div className="text-center p-8 bg-slate-900 border border-red-600 rounded-2xl shadow-[0_0_50px_rgba(220,38,38,0.2)] max-w-md w-full mx-4">
                      <AlertTriangle size={64} className="text-red-500 mx-auto mb-4" />
-                     <h2 className="text-4xl font-bold text-red-500 mb-2">GAME TOANG!</h2>
-                     <p className="text-slate-300 mb-6">Bạn đã chọn sai quá 3 lần.</p>
+                     <h2 className="text-4xl font-bold text-red-500 mb-2">GAME OVER</h2>
+                     <p className="text-slate-300 mb-6">Mưa rơi hết rồi...</p>
                      
                      <div className="bg-slate-800 p-4 rounded-lg mb-6">
                         <p className="text-slate-400 text-sm">Điểm số cuối cùng</p>
@@ -297,7 +422,7 @@ export default function App() {
                        onClick={startGame}
                        className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
                      >
-                       <RefreshCw size={20} /> CHƠI LẠI TỪ ĐẦU
+                       <RefreshCw size={20} /> CHƠI LẠI
                      </button>
                  </div>
              </div>
@@ -308,16 +433,16 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-8 text-slate-600 text-sm text-center py-4">
+      <footer className="mt-2 text-slate-600 text-[10px] text-center">
         <p>Engine: Procedural Generation + Gemini 2.5 Flash Lite</p>
       </footer>
 
       {/* Custom Keyframe animation for Shake */}
       <style>{`
         @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-5px); }
-          75% { transform: translateX(5px); }
+          0%, 100% { transform: translateX(-50%) rotate(0deg); }
+          25% { transform: translateX(calc(-50% - 5px)) rotate(-5deg); }
+          75% { transform: translateX(calc(-50% + 5px)) rotate(5deg); }
         }
         .animate-shake {
           animation: shake 0.3s ease-in-out;
