@@ -6,12 +6,12 @@ type SoundType = 'bgm' | 'correct' | 'wrong' | 'miss' | 'levelup' | 'gameover';
 
 class AudioManager {
     private sounds: Record<SoundType, string> = {
-        bgm: '/assets/sounds/bgm.mp3',
-        correct: '/assets/sounds/correct.mp3',
-        wrong: '/assets/sounds/wrong.mp3',
-        miss: '/assets/sounds/miss.mp3',
-        levelup: '/assets/sounds/levelup.mp3',
-        gameover: '/assets/sounds/gameover.mp3'
+        bgm: '/sounds/bgm.mp3',
+        correct: '/sounds/correct.mp3',
+        wrong: '/sounds/wrong.mp3',
+        miss: '/sounds/miss.mp3',
+        levelup: '/sounds/levelup.mp3',
+        gameover: '/sounds/gameover.mp3'
     };
 
     private bgmAudio: HTMLAudioElement | null = null;
@@ -50,13 +50,13 @@ class AudioManager {
 
         const src = this.sounds[type];
         const audio = new Audio(src);
-        
+
         // Volume adjustment per type
         if (type === 'correct') audio.volume = 0.6;
         if (type === 'wrong') audio.volume = 0.8;
         if (type === 'miss') audio.volume = 1.0;
         if (type === 'levelup') audio.volume = 0.7;
-        
+
         // Clone node trick is not needed with new Audio() every time, 
         // but new Audio() allows overlapping sounds (polyphony) which is what we want.
         audio.play().catch(() => {
